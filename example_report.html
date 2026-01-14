@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Health Monitor - Example Report</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .header h1 {
+            font-size: 36px;
+            color: #2d3748;
+            margin-bottom: 12px;
+        }
+        
+        .header .timestamp {
+            color: #718096;
+            font-size: 14px;
+        }
+        
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .summary-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .summary-card .label {
+            font-size: 14px;
+            color: #718096;
+            margin-bottom: 8px;
+        }
+        
+        .summary-card .value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        
+        .critical-value { color: #e53e3e; }
+        .high-value { color: #ed8936; }
+        .medium-value { color: #ecc94b; }
+        .ok-value { color: #48bb78; }
+        
+        .section {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .section-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 24px;
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .section-header h2 {
+            font-size: 24px;
+            margin-left: 12px;
+        }
+        
+        .section-icon {
+            font-size: 32px;
+        }
+        
+        .critical-section { border-left: 8px solid #e53e3e; }
+        .high-section { border-left: 8px solid #ed8936; }
+        .medium-section { border-left: 8px solid #ecc94b; }
+        .ok-section { border-left: 8px solid #48bb78; }
+        
+        .issue-card {
+            background: #f7fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        
+        .issue-card:last-child {
+            margin-bottom: 0;
+        }
+        
+        .issue-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+        
+        .issue-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2d3748;
+        }
+        
+        .issue-count {
+            background: #e53e3e;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .high-count { background: #ed8936; }
+        .medium-count { background: #ecc94b; color: #2d3748; }
+        
+        .issue-description {
+            color: #4a5568;
+            margin-bottom: 16px;
+        }
+        
+        .error-types {
+            margin-top: 12px;
+        }
+        
+        .error-type-tag {
+            display: inline-block;
+            background: #e53e3e;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .oldest-task {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 12px;
+            border-left: 4px solid #e53e3e;
+        }
+        
+        .oldest-task-label {
+            font-size: 12px;
+            color: #718096;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        .oldest-task-detail {
+            font-size: 14px;
+            color: #2d3748;
+            margin-bottom: 4px;
+        }
+        
+        .ok-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        
+        .ok-badge {
+            background: #48bb78;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+        
+        .collapsible-content {
+            display: none;
+        }
+        
+        .collapsible-content.active {
+            display: block;
+        }
+        
+        .expand-icon {
+            transition: transform 0.3s;
+        }
+        
+        .expand-icon.rotated {
+            transform: rotate(180deg);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📊 Task Health Monitor</h1>
+            <div class="timestamp">Generado: 2026-01-14 20:30:00 (EJEMPLO)</div>
+        </div>
+        
+        <!-- Summary Cards -->
+        <div class="summary-grid">
+            <div class="summary-card">
+                <div class="label">🔴 Crítico</div>
+                <div class="value critical-value">3</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">⚠️ Alta Prioridad</div>
+                <div class="value high-value">1</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">📋 Prioridad Media</div>
+                <div class="value medium-value">1</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">✅ Saludable</div>
+                <div class="value ok-value">12</div>
+            </div>
+        </div>
+
+        <!-- Critical Issues -->
+        <div class="section critical-section">
+            <div class="section-header" onclick="toggleSection('critical')">
+                <span class="section-icon">🔴</span>
+                <h2>Issues Críticos</h2>
+                <span class="expand-icon" id="critical-icon" style="margin-left: auto;">▼</span>
+            </div>
+            <div class="collapsible-content active" id="critical-content">
+                
+                <!-- POLLING Issue -->
+                <div class="issue-card">
+                    <div class="issue-header">
+                        <div class="issue-name">POLLING</div>
+                        <div class="issue-count">11 tasks</div>
+                    </div>
+                    <div class="issue-description">Marketplace polling tasks stuck</div>
+                    <div class="error-types">
+                        <span class="error-type-tag">RestRepositoryNotFoundException (2)</span>
+                        <span class="error-type-tag">GraphQLRepositoryException (9)</span>
+                    </div>
+                    <div class="oldest-task">
+                        <div class="oldest-task-label">OLDEST TASK</div>
+                        <div class="oldest-task-detail">Task ID: 4185056</div>
+                        <div class="oldest-task-detail">Last Run: 2025-12-28 14:30:00</div>
+                        <div class="oldest-task-detail">Exception: RestRepositoryNotFoundException</div>
+                        <div class="oldest-task-detail">Error: Returns not found - Walmart seller 10</div>
+                    </div>
+                </div>
+
+                <!-- LIVERPOOL_CONFIRM Issue -->
+                <div class="issue-card">
+                    <div class="issue-header">
+                        <div class="issue-name">LIVERPOOL_CONFIRM</div>
+                        <div class="issue-count">10 tasks</div>
+                    </div>
+                    <div class="issue-description">Liverpool order confirmation failures</div>
+                    <div class="error-types">
+                        <span class="error-type-tag">RestRepositoryException (10)</span>
+                    </div>
+                    <div class="oldest-task">
+                        <div class="oldest-task-label">OLDEST TASK</div>
+                        <div class="oldest-task-detail">Task ID: 50378755</div>
+                        <div class="oldest-task-detail">Last Run: 2026-01-14 20:29:00</div>
+                        <div class="oldest-task-detail">Exception: RestRepositoryException</div>
+                        <div class="oldest-task-detail">Error: Missing field: Bultos - Order 4620097652</div>
+                    </div>
+                </div>
+
+                <!-- WMS Issue -->
+                <div class="issue-card">
+                    <div class="issue-header">
+                        <div class="issue-name">WMS</div>
+                        <div class="issue-count">157 tasks</div>
+                    </div>
+                    <div class="issue-description">WMS integration tasks with errors</div>
+                    <div class="error-types">
+                        <span class="error-type-tag">RecordNotFoundException (50)</span>
+                        <span class="error-type-tag">UnauthorizedRestRepositoryException (15)</span>
+                        <span class="error-type-tag">Other (92)</span>
+                    </div>
+                    <div class="oldest-task">
+                        <div class="oldest-task-label">OLDEST TASK</div>
+                        <div class="oldest-task-detail">Task ID: 50370991</div>
+                        <div class="oldest-task-detail">Last Run: 2026-01-14 18:45:00</div>
+                        <div class="oldest-task-detail">Exception: RecordNotFoundException</div>
+                        <div class="oldest-task-detail">Error: ShippingLabel not found for order 3801188</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- High Priority -->
+        <div class="section high-section">
+            <div class="section-header" onclick="toggleSection('high')">
+                <span class="section-icon">⚠️</span>
+                <h2>Alta Prioridad</h2>
+                <span class="expand-icon" id="high-icon" style="margin-left: auto;">▼</span>
+            </div>
+            <div class="collapsible-content" id="high-content">
+                
+                <div class="issue-card">
+                    <div class="issue-header">
+                        <div class="issue-name">ORDER_UPDATE_REFUND</div>
+                        <div class="issue-count high-count">23 tasks</div>
+                    </div>
+                    <div class="issue-description">Order refund update tasks stuck</div>
+                    <div class="error-types">
+                        <span class="error-type-tag">UnsupportedOperationException (23)</span>
+                    </div>
+                    <div class="oldest-task">
+                        <div class="oldest-task-label">OLDEST TASK</div>
+                        <div class="oldest-task-detail">Task ID: 50365123</div>
+                        <div class="oldest-task-detail">Last Run: 2026-01-13 10:15:00</div>
+                        <div class="oldest-task-detail">Exception: UnsupportedOperationException</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Medium Priority -->
+        <div class="section medium-section">
+            <div class="section-header" onclick="toggleSection('medium')">
+                <span class="section-icon">📋</span>
+                <h2>Prioridad Media</h2>
+                <span class="expand-icon" id="medium-icon" style="margin-left: auto;">▼</span>
+            </div>
+            <div class="collapsible-content" id="medium-content">
+                
+                <div class="issue-card">
+                    <div class="issue-header">
+                        <div class="issue-name">ITEM_UPDATE</div>
+                        <div class="issue-count medium-count">5 tasks</div>
+                    </div>
+                    <div class="issue-description">Item update tasks stuck</div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Healthy Categories -->
+        <div class="section ok-section">
+            <div class="section-header">
+                <span class="section-icon">✅</span>
+                <h2>Categorías Saludables</h2>
+            </div>
+            <div class="ok-list">
+                <div class="ok-badge">TOKEN</div>
+                <div class="ok-badge">CHECK_STOCK</div>
+                <div class="ok-badge">WEBHOOKS</div>
+                <div class="ok-badge">FILES</div>
+                <div class="ok-badge">STATS</div>
+                <div class="ok-badge">ODOO</div>
+                <div class="ok-badge">MELI_REVIEW_UPDATE</div>
+                <div class="ok-badge">ORDER_UPDATE</div>
+                <div class="ok-badge">CREATION</div>
+                <div class="ok-badge">INTERNAL_SHIPMENT</div>
+                <div class="ok-badge">ZIPNOVA</div>
+                <div class="ok-badge">UPDATE_ITEMS_FORCE</div>
+            </div>
+        </div>
+
+    </div>
+    
+    <script>
+        function toggleSection(sectionId) {
+            const content = document.getElementById(sectionId + '-content');
+            const icon = document.getElementById(sectionId + '-icon');
+            
+            if (content.classList.contains('active')) {
+                content.classList.remove('active');
+                icon.classList.remove('rotated');
+            } else {
+                content.classList.add('active');
+                icon.classList.add('rotated');
+            }
+        }
+    </script>
+</body>
+</html>
