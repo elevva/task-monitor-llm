@@ -47,31 +47,31 @@ def connect_db():
 def save_json(data, filename, directory='data'):
     """
     Save data to JSON file with timestamp.
-    
+
     Args:
         data: Data to save
         filename: Name of the file
         directory: Directory to save in (default: 'data')
-    
+
     Returns:
         str: Full path to saved file
     """
     os.makedirs(directory, exist_ok=True)
     filepath = os.path.join(directory, filename)
-    
+
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, default=str, ensure_ascii=False)
-    
+
     print(f"✓ Saved: {filepath}")
     return filepath
 
 def load_json(filepath):
     """
     Load data from JSON file.
-    
+
     Args:
         filepath: Path to JSON file
-    
+
     Returns:
         dict: Loaded data
     """
@@ -81,23 +81,23 @@ def load_json(filepath):
 def execute_all_queries():
     """
     Execute all monitoring queries and return results.
-    
+
     Returns:
         dict: Query results organized by query name
     """
     conn = connect_db()
     cursor = conn.cursor(dictionary=True)
-    
+
     results = {}
-    
+
     print("\n" + "="*80)
     print("TASK HEALTH MONITOR - Executing Queries")
     print("="*80 + "\n")
-    
+
     for query in QUERIES:
         query_name = query['name']
         print(f"Running {query_name}...", end=" ")
-        
+
         try:
             cursor.execute(query['sql'])
             rows = cursor.fetchall()
@@ -115,24 +115,24 @@ def execute_all_queries():
                 'data': [],
                 'error': str(e)
             }
-    
+
     cursor.close()
     conn.close()
-    
+
     print("\n" + "="*80)
     print("Query execution completed")
     print("="*80 + "\n")
-    
+
     return results
 
 def analyze_with_claude(results):
     """
     Sends query results to Claude AI for deep analysis and recommendations.
     Includes context from PRIORITY_RULES.md and TASK_QUERIES.md if available.
-    
+
     Args:
         results: Dict with query results
-        
+
     Returns:
         dict: Claude's analysis by category with recommendations, or None if skipped/failed
     """
@@ -142,7 +142,7 @@ def analyze_with_claude(results):
         print("   To enable AI analysis, add your API key to .env file")
         print("   Get one at: https://console.anthropic.com/\n")
         return None
-    
+
     # Check if anthropic package is installed
     try:
         import anthropic
@@ -150,7 +150,7 @@ def analyze_with_claude(results):
         print("⚠️  WARNING: anthropic package not installed - skipping Claude AI analysis")
         print("   Install it with: pip install -r requirements.txt\n")
         return None
-    
+
     # Prepare data for Claude (simplify to avoid token limits)
     summary_data = {}
     for query_name, result in results.items():
@@ -160,7 +160,7 @@ def analyze_with_claude(results):
                 'description': result['description'],
                 'samples': []
             }
-            
+
             # Include maximum 3 examples per query
             for i, task in enumerate(result['data'][:3]):
                 summary_data[query_name]['samples'].append({
@@ -170,11 +170,11 @@ def analyze_with_claude(results):
                     'last_run': str(task.get('last_run')),
                     'data': str(task.get('data', ''))[:100]
                 })
-    
+
     if not summary_data:
         print("✓ No issues found - skipping Claude AI analysis\n")
         return None
-    
+
     # Load documentation context if available
     context = ""
     doc_files = ['PRIORITY_RULES.md', 'TASK_QUERIES.md']
@@ -185,21 +185,21 @@ def analyze_with_claude(results):
                     context += f"\n## {doc_file}\n{f.read()}\n"
             except Exception as e:
                 print(f"⚠️  Could not read {doc_file}: {str(e)}")
-    
+
     print("🤖 Analyzing with Claude AI...", end=" ")
-    
+
     # Call Claude API
     client = anthropic.Anthropic(api_key=api_key)
-    
+
     prompt = f"""Sos un experto en sistemas de e-commerce y análisis de tasks. Analiza los siguientes problemas detectados en el sistema de Elevva.
 """
-    
+
     if context:
         prompt += f"""
 CONTEXTO DEL SISTEMA:
 {context}
 """
-    
+
     prompt += f"""
 PROBLEMAS DETECTADOS:
 {json.dumps(summary_data, indent=2, default=str)}
@@ -223,7 +223,7 @@ Formato de respuesta:
     "additional_notes": "notas opcionales"
   }}
 }}"""
-    
+
     try:
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -233,20 +233,20 @@ Formato de respuesta:
                 "content": prompt
             }]
         )
-        
+
         # Extract JSON from response
         response_text = message.content[0].text
-        
+
         # Claude sometimes wraps JSON in ```json, clean it
         if '```json' in response_text:
             response_text = response_text.split('```json')[1].split('```')[0]
         elif '```' in response_text:
             response_text = response_text.split('```')[1].split('```')[0]
-        
+
         analysis = json.loads(response_text.strip())
-        
+
         print("✓ Complete\n")
-        
+
         # Add metadata
         analysis_with_metadata = {
             'timestamp': datetime.now().isoformat(),
@@ -254,9 +254,9 @@ Formato de respuesta:
             'total_issues': len(summary_data),
             'analysis': analysis
         }
-        
+
         return analysis_with_metadata
-        
+
     except json.JSONDecodeError as e:
         print(f"✗ Failed to parse Claude response: {str(e)}\n")
         return None
@@ -268,13 +268,13 @@ Formato de respuesta:
 def analyze_results(results):
     """
     Analyze query results and categorize by priority.
-    
+
     Priority Rules:
     - CRITICAL: >10 tasks OR tasks older than 15 days
     - HIGH: 5-10 tasks OR critical operations (LIVERPOOL_CONFIRM, WMS with errors)
     - MEDIUM: 2-5 tasks
     - OK: 0-1 tasks
-    
+
     Returns:
         dict: Results organized by priority
     """
@@ -284,11 +284,11 @@ def analyze_results(results):
         'medium': [],
         'ok': []
     }
-    
+
     for query_name, result in results.items():
         count = result['count']
         data = result['data']
-        
+
         if count == 0:
             analysis['ok'].append({
                 'name': query_name,
@@ -296,7 +296,7 @@ def analyze_results(results):
                 'count': count
             })
             continue
-        
+
         # Check if tasks are very old (>15 days)
         very_old_tasks = False
         if data and len(data) > 0:
@@ -307,7 +307,7 @@ def analyze_results(results):
                     days_ago = (datetime.now() - last_run).days
                     if days_ago > 15:
                         very_old_tasks = True
-        
+
         # Categorize by priority
         if count > 10 or very_old_tasks:
             priority = 'critical'
@@ -317,7 +317,7 @@ def analyze_results(results):
             priority = 'medium'
         else:
             priority = 'ok'
-        
+
         # Build issue summary
         issue = {
             'name': query_name,
@@ -325,7 +325,7 @@ def analyze_results(results):
             'count': count,
             'data': data[:5]  # Include first 5 examples
         }
-        
+
         # Add specific details based on query type
         if data and len(data) > 0:
             # Extract common error types
@@ -333,9 +333,9 @@ def analyze_results(results):
             for task in data:
                 exc = task.get('exception', 'Unknown')
                 exceptions[exc] = exceptions.get(exc, 0) + 1
-            
+
             issue['error_types'] = exceptions
-            
+
             # Get oldest task info
             oldest = data[0]
             if oldest.get('last_run'):
@@ -345,44 +345,43 @@ def analyze_results(results):
                     'exception': oldest.get('exception'),
                     'error_message': oldest.get('error_message', '')[:200]
                 }
-        
+
         analysis[priority].append(issue)
-    
+
     return analysis
 
 def print_console_report(analysis, claude_analysis=None):
     """Print analysis results to console with optional Claude AI insights"""
-    
+
     # Extract analysis from metadata if present
     if claude_analysis and 'analysis' in claude_analysis:
         ai_metadata = claude_analysis
         claude_analysis = claude_analysis['analysis']
     else:
         ai_metadata = None
-    """Print analysis results to console with optional Claude AI insights"""
-    
+
     print("\n" + "="*80)
     print("TASK HEALTH ANALYSIS REPORT")
     print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80 + "\n")
-    
+
     # Summary
     total_critical = len(analysis['critical'])
     total_high = len(analysis['high'])
     total_medium = len(analysis['medium'])
     total_ok = len(analysis['ok'])
-    
+
     print("SUMMARY")
     print("-" * 80)
     print(f"🔴 CRITICAL: {total_critical} categories")
     print(f"⚠️  HIGH:     {total_high} categories")
     print(f"📋 MEDIUM:   {total_medium} categories")
     print(f"✅ OK:       {total_ok} categories")
-    
+
     if claude_analysis:
         print(f"🤖 AI ANALYSIS: Enabled")
     print()
-    
+
     # Critical Issues
     if total_critical > 0:
         print("\n" + "🔴 CRITICAL ISSUES" + "\n" + "="*80)
@@ -394,9 +393,9 @@ def print_console_report(analysis, claude_analysis=None):
                 print(f"Oldest: Task #{oldest['id']} - Last run: {oldest['last_run']}")
                 if oldest.get('exception'):
                     print(f"Error: {oldest['exception']}")
-            
+
             # Add Claude analysis if available
-            if claude_analysis and issue['name'] in claude_analysis.get('analysis', claude_analysis):
+            if claude_analysis and issue['name'] in claude_analysis:
                 ai = claude_analysis[issue['name']]
                 print(f"\n🤖 AI ANALYSIS:")
                 print(f"   Root Cause: {ai.get('root_cause', 'N/A')}")
@@ -408,49 +407,49 @@ def print_console_report(analysis, claude_analysis=None):
                 print(f"   ETA: {ai.get('estimated_resolution_time', 'N/A')}")
                 if ai.get('additional_notes'):
                     print(f"   Notes: {ai.get('additional_notes')}")
-            
+
             print("-" * 80)
-    
+
     # High Priority
     if total_high > 0:
         print("\n" + "⚠️  HIGH PRIORITY" + "\n" + "="*80)
         for issue in analysis['high']:
             print(f"\n{issue['name']} - {issue['description']}")
             print(f"Count: {issue['count']} tasks")
-            
+
             # Add Claude analysis if available
-            if claude_analysis and issue['name'] in claude_analysis.get('analysis', claude_analysis):
+            if claude_analysis and issue['name'] in claude_analysis:
                 ai = claude_analysis[issue['name']]
                 print(f"\n🤖 AI ANALYSIS:")
                 print(f"   Root Cause: {ai.get('root_cause', 'N/A')}")
                 print(f"   Actions: {', '.join(ai.get('recommended_actions', [])[:2])}")
-            
+
             print("-" * 80)
-    
+
     # Medium Priority
     if total_medium > 0:
         print("\n" + "📋 MEDIUM PRIORITY" + "\n" + "="*80)
         for issue in analysis['medium']:
             print(f"{issue['name']}: {issue['count']} tasks")
-    
+
     # OK
     print("\n" + "✅ HEALTHY CATEGORIES" + "\n" + "="*80)
     ok_names = [issue['name'] for issue in analysis['ok']]
     print(", ".join(ok_names))
-    
+
     print("\n" + "="*80 + "\n")
 
 def generate_html_report(analysis, claude_analysis=None, output_file='task_health_report.html'):
     """Generate HTML dashboard from analysis results"""
-    
+
     # Extract analysis from metadata if present
     ai_metadata = None
     if claude_analysis and 'analysis' in claude_analysis:
         ai_metadata = claude_analysis
         claude_analysis = claude_analysis['analysis']
-    
+
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
+
     html_content = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -458,149 +457,149 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Task Health Monitor</title>
     <style>
-        * {{{{
+        * {{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-        }}}}
+        }}
         
-        body {{{{
+        body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 20px;
             min-height: 100vh;
-        }}}}
+        }}
         
-        .container {{{{
+        .container {{
             max-width: 1400px;
             margin: 0 auto;
-        }}}}
+        }}
         
-        .header {{{{
+        .header {{
             background: white;
             border-radius: 16px;
             padding: 32px;
             margin-bottom: 24px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }}}}
+        }}
         
-        .header h1 {{{{
+        .header h1 {{
             font-size: 36px;
             color: #2d3748;
             margin-bottom: 12px;
-        }}}}
+        }}
         
-        .header .timestamp {{{{
+        .header .timestamp {{
             color: #718096;
             font-size: 14px;
-        }}}}
+        }}
         
-        .summary-grid {{{{
+        .summary-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 16px;
             margin-bottom: 24px;
-        }}}}
+        }}
         
-        .summary-card {{{{
+        .summary-card {{
             background: white;
             border-radius: 12px;
             padding: 24px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }}}}
+        }}
         
-        .summary-card .label {{{{
+        .summary-card .label {{
             font-size: 14px;
             color: #718096;
             margin-bottom: 8px;
-        }}}}
+        }}
         
-        .summary-card .value {{{{
+        .summary-card .value {{
             font-size: 32px;
             font-weight: bold;
-        }}}}
+        }}
         
-        .critical-value {{{{ color: #e53e3e; }}}}
-        .high-value {{{{ color: #ed8936; }}}}
-        .medium-value {{{{ color: #ecc94b; }}}}
-        .ok-value {{{{ color: #48bb78; }}}}
+        .critical-value {{ color: #e53e3e; }}
+        .high-value {{ color: #ed8936; }}
+        .medium-value {{ color: #ecc94b; }}
+        .ok-value {{ color: #48bb78; }}
         
-        .section {{{{
+        .section {{
             background: white;
             border-radius: 16px;
             padding: 32px;
             margin-bottom: 24px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }}}}
+        }}
         
-        .section-header {{{{
+        .section-header {{
             display: flex;
             align-items: center;
             margin-bottom: 24px;
             cursor: pointer;
             user-select: none;
-        }}}}
+        }}
         
-        .section-header h2 {{{{
+        .section-header h2 {{
             font-size: 24px;
             margin-left: 12px;
-        }}}}
+        }}
         
-        .section-icon {{{{
+        .section-icon {{
             font-size: 32px;
-        }}}}
+        }}
         
-        .critical-section {{{{ border-left: 8px solid #e53e3e; }}}}
-        .high-section {{{{ border-left: 8px solid #ed8936; }}}}
-        .medium-section {{{{ border-left: 8px solid #ecc94b; }}}}
-        .ok-section {{{{ border-left: 8px solid #48bb78; }}}}
+        .critical-section {{ border-left: 8px solid #e53e3e; }}
+        .high-section {{ border-left: 8px solid #ed8936; }}
+        .medium-section {{ border-left: 8px solid #ecc94b; }}
+        .ok-section {{ border-left: 8px solid #48bb78; }}
         
-        .issue-card {{{{
+        .issue-card {{
             background: #f7fafc;
             border-radius: 12px;
             padding: 20px;
             margin-bottom: 16px;
-        }}}}
+        }}
         
-        .issue-card:last-child {{{{
+        .issue-card:last-child {{
             margin-bottom: 0;
-        }}}}
+        }}
         
-        .issue-header {{{{
+        .issue-header {{
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
             margin-bottom: 12px;
-        }}}}
+        }}
         
-        .issue-name {{{{
+        .issue-name {{
             font-size: 18px;
             font-weight: bold;
             color: #2d3748;
-        }}}}
+        }}
         
-        .issue-count {{{{
+        .issue-count {{
             background: #e53e3e;
             color: white;
             padding: 4px 12px;
             border-radius: 20px;
             font-size: 14px;
             font-weight: bold;
-        }}}}
+        }}
         
-        .high-count {{{{ background: #ed8936; }}}}
-        .medium-count {{{{ background: #ecc94b; color: #2d3748; }}}}
+        .high-count {{ background: #ed8936; }}
+        .medium-count {{ background: #ecc94b; color: #2d3748; }}
         
-        .issue-description {{{{
+        .issue-description {{
             color: #4a5568;
             margin-bottom: 16px;
-        }}}}
+        }}
         
-        .error-types {{{{
+        .error-types {{
             margin-top: 12px;
-        }}}}
+        }}
         
-        .error-type-tag {{{{
+        .error-type-tag {{
             display: inline-block;
             background: #e53e3e;
             color: white;
@@ -609,56 +608,56 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
             font-size: 12px;
             margin-right: 8px;
             margin-bottom: 8px;
-        }}}}
+        }}
         
-        .oldest-task {{{{
+        .oldest-task {{
             background: white;
             padding: 16px;
             border-radius: 8px;
             margin-top: 12px;
             border-left: 4px solid #e53e3e;
-        }}}}
+        }}
         
-        .oldest-task-label {{{{
+        .oldest-task-label {{
             font-size: 12px;
             color: #718096;
             font-weight: bold;
             margin-bottom: 8px;
-        }}}}
+        }}
         
-        .oldest-task-detail {{{{
+        .oldest-task-detail {{
             font-size: 14px;
             color: #2d3748;
             margin-bottom: 4px;
-        }}}}
+        }}
         
-        .ok-list {{{{
+        .ok-list {{
             display: flex;
             flex-wrap: wrap;
             gap: 12px;
-        }}}}
+        }}
         
-        .ok-badge {{{{
+        .ok-badge {{
             background: #48bb78;
             color: white;
             padding: 8px 16px;
             border-radius: 20px;
             font-size: 14px;
-        }}}}
+        }}
         
-        .collapsible-content {{{{
+        .collapsible-content {{
             display: none;
-        }}}}
+        }}
         
-        .collapsible-content.active {{{{
+        .collapsible-content.active {{
             display: block;
-        }}}}
+        }}
         
-        .expand-icon {{{{
+        .expand-icon {{
             transition: transform 0.3s;
-        }}}}
+        }}
         
-        .expand-icon.rotated {{{{
+        .expand-icon.rotated {{
             transform: rotate(180deg);
         }}
         
@@ -742,7 +741,7 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
             font-size: 11px;
             font-weight: bold;
             margin-left: 8px;
-        }}}}
+        }}
     </style>
 </head>
 <body>
@@ -773,7 +772,7 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
             </div>
         </div>
 """
-    
+
     # Critical Issues Section
     if len(analysis['critical']) > 0:
         html_content += """
@@ -793,7 +792,7 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
                 for exc, count in issue['error_types'].items():
                     error_types_html += f"<span class='error-type-tag'>{exc} ({count})</span>"
                 error_types_html += "</div>"
-            
+
             oldest_task_html = ""
             if issue.get('oldest_task'):
                 oldest = issue['oldest_task']
@@ -806,25 +805,16 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
                     <div class='oldest-task-detail'>Error: {oldest.get('error_message', 'N/A')}</div>
                 </div>
                 """
-            
-            html_content += f"""
-                <div class="issue-card">
-                    <div class="issue-header">
-                        <div class="issue-name">{issue['name']}</div>
-                        <div class="issue-count">{issue['count']} tasks</div>
-                    </div>
-                    <div class="issue-description">{issue['description']}</div>
-                    {error_types_html}
 
-            
-            # Add Claude AI analysis if available
+            # Build Claude HTML BEFORE adding to html_content
             claude_html = ""
-            if claude_analysis and issue['name'] in claude_analysis.get('analysis', claude_analysis):
+            if claude_analysis and issue['name'] in claude_analysis:
                 ai = claude_analysis[issue['name']]
-                actions_html = "".join([f"<li>{action}</li>" for action in ai.get('recommended_actions', [])])
+                actions_list = ai.get('recommended_actions', [])
+                actions_html = "".join([f"<li>{act}</li>" for act in actions_list])
                 notes_html = f"<div class='analysis-notes'>{ai.get('additional_notes')}</div>" if ai.get('additional_notes') else ""
-                
-                claude_html = f'''
+
+                claude_html = f"""
                 <div class='claude-analysis'>
                     <div class='claude-analysis-header'>
                         <span class='ai-icon'>🤖</span>
@@ -857,16 +847,26 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
                     
                     {notes_html}
                 </div>
-                '''
+                """
+
+            html_content += f"""
+                <div class="issue-card">
+                    <div class="issue-header">
+                        <div class="issue-name">{issue['name']}</div>
+                        <div class="issue-count">{issue['count']} tasks</div>
+                    </div>
+                    <div class="issue-description">{issue['description']}</div>
+                    {error_types_html}
                     {oldest_task_html}
                     {claude_html}
                 </div>
 """
+
         html_content += """
             </div>
         </div>
 """
-    
+
     # High Priority Section
     if len(analysis['high']) > 0:
         html_content += """
@@ -886,7 +886,7 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
                 for exc, count in issue['error_types'].items():
                     error_types_html += f"<span class='error-type-tag'>{exc} ({count})</span>"
                 error_types_html += "</div>"
-            
+
             oldest_task_html = ""
             if issue.get('oldest_task'):
                 oldest = issue['oldest_task']
@@ -898,25 +898,16 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
                     <div class='oldest-task-detail'>Exception: {oldest.get('exception', 'N/A')}</div>
                 </div>
                 """
-            
-            html_content += f"""
-                <div class="issue-card">
-                    <div class="issue-header">
-                        <div class="issue-name">{issue['name']}</div>
-                        <div class="issue-count high-count">{issue['count']} tasks</div>
-                    </div>
-                    <div class="issue-description">{issue['description']}</div>
-                    {error_types_html}
 
-            
-            # Add Claude AI analysis if available
+            # Build Claude HTML BEFORE adding to html_content
             claude_html = ""
-            if claude_analysis and issue['name'] in claude_analysis.get('analysis', claude_analysis):
+            if claude_analysis and issue['name'] in claude_analysis:
                 ai = claude_analysis[issue['name']]
-                actions_html = "".join([f"<li>{action}</li>" for action in ai.get('recommended_actions', [])])
+                actions_list = ai.get('recommended_actions', [])
+                actions_html = "".join([f"<li>{act}</li>" for act in actions_list])
                 notes_html = f"<div class='analysis-notes'>{ai.get('additional_notes')}</div>" if ai.get('additional_notes') else ""
-                
-                claude_html = f'''
+
+                claude_html = f"""
                 <div class='claude-analysis'>
                     <div class='claude-analysis-header'>
                         <span class='ai-icon'>🤖</span>
@@ -949,16 +940,26 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
                     
                     {notes_html}
                 </div>
-                '''
+                """
+
+            html_content += f"""
+                <div class="issue-card">
+                    <div class="issue-header">
+                        <div class="issue-name">{issue['name']}</div>
+                        <div class="issue-count high-count">{issue['count']} tasks</div>
+                    </div>
+                    <div class="issue-description">{issue['description']}</div>
+                    {error_types_html}
                     {oldest_task_html}
                     {claude_html}
                 </div>
 """
+
         html_content += """
             </div>
         </div>
 """
-    
+
     # Medium Priority Section
     if len(analysis['medium']) > 0:
         html_content += """
@@ -985,7 +986,7 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
             </div>
         </div>
 """
-    
+
     # OK Section
     if len(analysis['ok']) > 0:
         html_content += """
@@ -1005,7 +1006,7 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
             </div>
         </div>
 """
-    
+
     # Close HTML
     html_content += """
     </div>
@@ -1027,39 +1028,39 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
 </body>
 </html>
 """
-    
+
     # Write to file
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
+
     print(f"\n✅ HTML report generated: {output_file}\n")
 
 
 def main():
     """Main execution function"""
-    
+
     # Parse command line arguments
     console_only = '--console-only' in sys.argv
     skip_ai = '--no-ai' in sys.argv
     from_json = '--from-json' in sys.argv
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M')
-    
+
     # Custom output file
     output_file = None
     if '--output' in sys.argv:
         idx = sys.argv.index('--output')
         if idx + 1 < len(sys.argv):
             output_file = sys.argv[idx + 1]
-    
+
     results = None
     claude_analysis = None
-    
+
     # Option 1: Load from existing JSON files
     if from_json:
         print("\n" + "="*80)
         print("LOADING FROM SAVED JSON FILES")
         print("="*80 + "\n")
-        
+
         idx = sys.argv.index('--from-json')
         if idx + 1 < len(sys.argv):
             results_file = sys.argv[idx + 1]
@@ -1067,7 +1068,7 @@ def main():
             print("❌ Error: --from-json requires a file path")
             print("   Usage: python3 run_health_check.py --from-json data/results_2026-01-14_21-00.json")
             sys.exit(1)
-        
+
         print(f"Loading results from: {results_file}")
         try:
             results = load_json(results_file)
@@ -1078,7 +1079,7 @@ def main():
         except json.JSONDecodeError as e:
             print(f"❌ Error: Invalid JSON in {results_file}: {str(e)}")
             sys.exit(1)
-        
+
         # Try to load corresponding Claude analysis
         claude_file = results_file.replace('results_', 'claude_').replace('/data/', '/analysis/')
         if os.path.exists(claude_file):
@@ -1090,15 +1091,15 @@ def main():
                 print(f"⚠️  Warning: Could not load Claude analysis: {str(e)}\n")
         else:
             print(f"ℹ️  No Claude analysis found at: {claude_file}\n")
-    
+
     # Option 2: Execute new queries
     else:
         # Execute queries
         results = execute_all_queries()
-        
+
         # Save results to JSON
         results_file = save_json(results, f'results_{timestamp}.json', 'data')
-        
+
         # Claude AI analysis (unless skipped)
         if not skip_ai:
             claude_analysis = analyze_with_claude(results)
@@ -1107,13 +1108,13 @@ def main():
                 save_json(claude_analysis, f'claude_{timestamp}.json', 'analysis')
         else:
             print("⏭️  Skipping Claude AI analysis (--no-ai flag)\n")
-    
+
     # Analyze results
     analysis = analyze_results(results)
-    
+
     # Print console report
     print_console_report(analysis, claude_analysis)
-    
+
     # Generate HTML unless console-only mode
     if not console_only:
         # Default output file based on mode
@@ -1126,9 +1127,9 @@ def main():
                 output_file = f'reports/report_{ts}.html'
             else:
                 output_file = f'reports/report_{timestamp}.html'
-        
+
         generate_html_report(analysis, claude_analysis, output_file)
-    
+
     # Summary
     print("\n" + "="*80)
     if from_json:
