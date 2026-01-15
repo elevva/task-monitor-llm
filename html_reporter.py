@@ -10,16 +10,19 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
 
     # Extract analysis from metadata if present
     ai_metadata = None
-    if claude_analysis and 'analysis' in claude_analysis:
-        ai_metadata = claude_analysis
-        claude_analysis = claude_analysis['analysis']
+    ai_analysis_type = 'legacy'
+    if claude_analysis:
+        if 'analysis' in claude_analysis:
+            ai_metadata = claude_analysis
+            ai_analysis_type = claude_analysis.get('analysis_type', 'legacy')
+            claude_analysis = claude_analysis['analysis']
 
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     html_content = _generate_html_header(timestamp, claude_analysis)
     html_content += _generate_summary_cards(analysis)
-    html_content += _generate_critical_section(analysis, claude_analysis)
-    html_content += _generate_high_section(analysis, claude_analysis)
+    html_content += _generate_critical_section(analysis, claude_analysis, ai_analysis_type)
+    html_content += _generate_high_section(analysis, claude_analysis, ai_analysis_type)
     html_content += _generate_medium_section(analysis)
     html_content += _generate_ok_section(analysis)
     html_content += _generate_html_footer()
@@ -193,6 +196,78 @@ def _generate_html_header(timestamp, claude_analysis):
             margin-bottom: 8px;
         }}
         
+        .seller-tags {{
+            margin-top: 8px;
+            margin-bottom: 12px;
+        }}
+        
+        .seller-tag {{
+            display: inline-block;
+            background: #4299e1;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            margin-right: 6px;
+            margin-bottom: 6px;
+        }}
+        
+        .seller-label {{
+            font-size: 12px;
+            color: #718096;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }}
+        
+        .error-group {{
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 12px;
+            border-left: 4px solid #667eea;
+        }}
+        
+        .error-group-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }}
+        
+        .error-group-exception {{
+            font-weight: bold;
+            color: #e53e3e;
+            font-size: 14px;
+        }}
+        
+        .error-group-count {{
+            background: #667eea;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+        }}
+        
+        .error-group-pattern {{
+            background: #edf2f7;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #4a5568;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }}
+        
+        .error-group-example {{
+            font-size: 13px;
+            color: #718096;
+        }}
+        
+        .error-group-example strong {{
+            color: #2d3748;
+        }}
+        
         .oldest-task {{
             background: white;
             padding: 16px;
@@ -325,6 +400,24 @@ def _generate_html_header(timestamp, claude_analysis):
             font-weight: bold;
             margin-left: 8px;
         }}
+        
+        .error-groups-container {{
+            margin-top: 16px;
+        }}
+        
+        .error-groups-title {{
+            font-size: 14px;
+            font-weight: bold;
+            color: #4a5568;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+        }}
+        
+        .error-groups-title::before {{
+            content: '📋';
+            margin-right: 8px;
+        }}
     </style>
 </head>
 <body>
@@ -362,7 +455,104 @@ def _generate_summary_cards(analysis):
 """
 
 
-def _generate_issue_card(issue, count_class='', claude_analysis=None):
+def _generate_claude_analysis_html(ai_analysis, group_key=None):
+    """Generate Claude analysis HTML for a specific group or issue"""
+    if not ai_analysis:
+        return ""
+    
+    # Try to find analysis by group_key first, then by partial match
+    ai = None
+    if group_key and group_key in ai_analysis:
+        ai = ai_analysis[group_key]
+    elif group_key:
+        # Try partial match on group_key
+        for key in ai_analysis:
+            if group_key.startswith(key.split('::')[0]):
+                ai = ai_analysis[key]
+                break
+    
+    if not ai:
+        return ""
+    
+    actions_list = ai.get('recommended_actions', [])
+    actions_html = "".join([f"<li>{act}</li>" for act in actions_list])
+    notes_html = f"<div class='analysis-notes'>{ai.get('additional_notes')}</div>" if ai.get('additional_notes') else ""
+
+    return f"""
+    <div class='claude-analysis'>
+        <div class='claude-analysis-header'>
+            <span class='ai-icon'>🤖</span>
+            <strong>Claude AI Analysis</strong>
+        </div>
+        
+        <div class='analysis-section'>
+            <div class='analysis-label'>Root Cause:</div>
+            <div class='analysis-content'>{ai.get('root_cause', 'N/A')}</div>
+        </div>
+        
+        <div class='analysis-section'>
+            <div class='analysis-label'>Business Impact:</div>
+            <div class='analysis-badge impact-{ai.get('business_impact', 'medium').lower()}'>
+                {ai.get('business_impact', 'N/A')}
+            </div>
+        </div>
+        
+        <div class='analysis-section'>
+            <div class='analysis-label'>Recommended Actions:</div>
+            <ul class='action-list'>
+                {actions_html}
+            </ul>
+        </div>
+        
+        <div class='analysis-section'>
+            <div class='analysis-label'>Estimated Resolution:</div>
+            <div class='analysis-content'>{ai.get('estimated_resolution_time', 'N/A')}</div>
+        </div>
+        
+        {notes_html}
+    </div>
+    """
+
+
+def _generate_error_group_html(group, claude_analysis=None, issue_name=None):
+    """Generate HTML for a single error group"""
+    seller_html = ""
+    if group.get('seller_ids'):
+        seller_tags = "".join([f"<span class='seller-tag'>Seller {sid}</span>" for sid in group['seller_ids'][:10]])
+        seller_html = f"""
+        <div class='seller-tags'>
+            <div class='seller-label'>SELLERS AFECTADOS:</div>
+            {seller_tags}
+        </div>
+        """
+    
+    example = group.get('example_task', {})
+    example_html = f"""
+    <div class='error-group-example'>
+        <strong>Task ID:</strong> {example.get('id', 'N/A')} | 
+        <strong>Last Run:</strong> {example.get('last_run', 'N/A')}
+    </div>
+    """ if example else ""
+    
+    # Generate Claude analysis for this specific group
+    group_key = f"{issue_name}::{group['exception']}::{group['pattern'][:30]}" if issue_name else None
+    claude_html = _generate_claude_analysis_html(claude_analysis, group_key)
+    
+    return f"""
+    <div class='error-group'>
+        <div class='error-group-header'>
+            <span class='error-group-exception'>{group['exception']}</span>
+            <span class='error-group-count'>{group['count']} tasks</span>
+        </div>
+        <div class='error-group-pattern'>{group['pattern']}</div>
+        {seller_html}
+        {example_html}
+        {claude_html}
+    </div>
+    """
+
+
+def _generate_issue_card(issue, count_class='', claude_analysis=None, ai_analysis_type='legacy'):
     """Generate HTML for a single issue card"""
     error_types_html = ""
     if issue.get('error_types'):
@@ -371,8 +561,89 @@ def _generate_issue_card(issue, count_class='', claude_analysis=None):
             error_types_html += f"<span class='error-type-tag'>{exc} ({count})</span>"
         error_types_html += "</div>"
 
+    # Show affected sellers at issue level
+    sellers_html = ""
+    if issue.get('affected_sellers'):
+        seller_tags = "".join([f"<span class='seller-tag'>Seller {sid}</span>" for sid in issue['affected_sellers'][:10]])
+        more_text = f" <span style='color: #718096; font-size: 11px;'>+{len(issue['affected_sellers']) - 10} más</span>" if len(issue['affected_sellers']) > 10 else ""
+        sellers_html = f"""
+        <div class='seller-tags'>
+            <div class='seller-label'>TODOS LOS SELLERS AFECTADOS:</div>
+            {seller_tags}{more_text}
+        </div>
+        """
+
+    # NEW: Error groups with individual Claude analysis
+    error_groups_html = ""
+    if issue.get('error_groups') and ai_analysis_type == 'error_groups':
+        groups_html = ""
+        for group in issue['error_groups']:
+            groups_html += _generate_error_group_html(group, claude_analysis, issue['name'])
+        
+        error_groups_html = f"""
+        <div class='error-groups-container'>
+            <div class='error-groups-title'>Errores Agrupados por Tipo y Patrón ({len(issue['error_groups'])} grupos)</div>
+            {groups_html}
+        </div>
+        """
+    elif issue.get('error_groups'):
+        # Show error groups without individual Claude analysis (legacy mode)
+        groups_html = ""
+        for group in issue['error_groups']:
+            groups_html += _generate_error_group_html(group, None, issue['name'])
+        
+        error_groups_html = f"""
+        <div class='error-groups-container'>
+            <div class='error-groups-title'>Errores Agrupados por Tipo y Patrón ({len(issue['error_groups'])} grupos)</div>
+            {groups_html}
+        </div>
+        """
+        
+        # Add issue-level Claude analysis for legacy mode
+        if claude_analysis and issue['name'] in claude_analysis:
+            ai = claude_analysis[issue['name']]
+            actions_list = ai.get('recommended_actions', [])
+            actions_html = "".join([f"<li>{act}</li>" for act in actions_list])
+            notes_html = f"<div class='analysis-notes'>{ai.get('additional_notes')}</div>" if ai.get('additional_notes') else ""
+
+            error_groups_html += f"""
+            <div class='claude-analysis'>
+                <div class='claude-analysis-header'>
+                    <span class='ai-icon'>🤖</span>
+                    <strong>Claude AI Analysis</strong>
+                </div>
+                
+                <div class='analysis-section'>
+                    <div class='analysis-label'>Root Cause:</div>
+                    <div class='analysis-content'>{ai.get('root_cause', 'N/A')}</div>
+                </div>
+                
+                <div class='analysis-section'>
+                    <div class='analysis-label'>Business Impact:</div>
+                    <div class='analysis-badge impact-{ai.get('business_impact', 'medium').lower()}'>
+                        {ai.get('business_impact', 'N/A')}
+                    </div>
+                </div>
+                
+                <div class='analysis-section'>
+                    <div class='analysis-label'>Recommended Actions:</div>
+                    <ul class='action-list'>
+                        {actions_html}
+                    </ul>
+                </div>
+                
+                <div class='analysis-section'>
+                    <div class='analysis-label'>Estimated Resolution:</div>
+                    <div class='analysis-content'>{ai.get('estimated_resolution_time', 'N/A')}</div>
+                </div>
+                
+                {notes_html}
+            </div>
+            """
+
+    # Keep oldest task for reference (but less prominent now)
     oldest_task_html = ""
-    if issue.get('oldest_task'):
+    if issue.get('oldest_task') and not issue.get('error_groups'):
         oldest = issue['oldest_task']
         oldest_task_html = f"""
         <div class='oldest-task'>
@@ -384,49 +655,6 @@ def _generate_issue_card(issue, count_class='', claude_analysis=None):
         </div>
         """
 
-    # Build Claude HTML
-    claude_html = ""
-    if claude_analysis and issue['name'] in claude_analysis:
-        ai = claude_analysis[issue['name']]
-        actions_list = ai.get('recommended_actions', [])
-        actions_html = "".join([f"<li>{act}</li>" for act in actions_list])
-        notes_html = f"<div class='analysis-notes'>{ai.get('additional_notes')}</div>" if ai.get('additional_notes') else ""
-
-        claude_html = f"""
-        <div class='claude-analysis'>
-            <div class='claude-analysis-header'>
-                <span class='ai-icon'>🤖</span>
-                <strong>Claude AI Analysis</strong>
-            </div>
-            
-            <div class='analysis-section'>
-                <div class='analysis-label'>Root Cause:</div>
-                <div class='analysis-content'>{ai.get('root_cause', 'N/A')}</div>
-            </div>
-            
-            <div class='analysis-section'>
-                <div class='analysis-label'>Business Impact:</div>
-                <div class='analysis-badge impact-{ai.get('business_impact', 'medium').lower()}'>
-                    {ai.get('business_impact', 'N/A')}
-                </div>
-            </div>
-            
-            <div class='analysis-section'>
-                <div class='analysis-label'>Recommended Actions:</div>
-                <ul class='action-list'>
-                    {actions_html}
-                </ul>
-            </div>
-            
-            <div class='analysis-section'>
-                <div class='analysis-label'>Estimated Resolution:</div>
-                <div class='analysis-content'>{ai.get('estimated_resolution_time', 'N/A')}</div>
-            </div>
-            
-            {notes_html}
-        </div>
-        """
-
     return f"""
             <div class="issue-card">
                 <div class="issue-header">
@@ -435,13 +663,14 @@ def _generate_issue_card(issue, count_class='', claude_analysis=None):
                 </div>
                 <div class="issue-description">{issue['description']}</div>
                 {error_types_html}
+                {sellers_html}
+                {error_groups_html}
                 {oldest_task_html}
-                {claude_html}
             </div>
 """
 
 
-def _generate_critical_section(analysis, claude_analysis):
+def _generate_critical_section(analysis, claude_analysis, ai_analysis_type='legacy'):
     """Generate critical issues section HTML"""
     if len(analysis['critical']) == 0:
         return ""
@@ -457,7 +686,7 @@ def _generate_critical_section(analysis, claude_analysis):
             <div class="collapsible-content active" id="critical-content">
 """
     for issue in analysis['critical']:
-        html += _generate_issue_card(issue, '', claude_analysis)
+        html += _generate_issue_card(issue, '', claude_analysis, ai_analysis_type)
 
     html += """
             </div>
@@ -466,7 +695,7 @@ def _generate_critical_section(analysis, claude_analysis):
     return html
 
 
-def _generate_high_section(analysis, claude_analysis):
+def _generate_high_section(analysis, claude_analysis, ai_analysis_type='legacy'):
     """Generate high priority section HTML"""
     if len(analysis['high']) == 0:
         return ""
@@ -482,7 +711,7 @@ def _generate_high_section(analysis, claude_analysis):
             <div class="collapsible-content" id="high-content">
 """
     for issue in analysis['high']:
-        html += _generate_issue_card(issue, 'high-count', claude_analysis)
+        html += _generate_issue_card(issue, 'high-count', claude_analysis, ai_analysis_type)
 
     html += """
             </div>
@@ -507,6 +736,20 @@ def _generate_medium_section(analysis):
             <div class="collapsible-content" id="medium-content">
 """
     for issue in analysis['medium']:
+        # Show error groups for medium priority too
+        error_groups_html = ""
+        if issue.get('error_groups'):
+            groups_html = ""
+            for group in issue['error_groups']:
+                groups_html += _generate_error_group_html(group, None, issue['name'])
+            
+            error_groups_html = f"""
+            <div class='error-groups-container'>
+                <div class='error-groups-title'>Errores Agrupados ({len(issue['error_groups'])} grupos)</div>
+                {groups_html}
+            </div>
+            """
+        
         html += f"""
             <div class="issue-card">
                 <div class="issue-header">
@@ -514,6 +757,7 @@ def _generate_medium_section(analysis):
                     <div class="issue-count medium-count">{issue['count']} tasks</div>
                 </div>
                 <div class="issue-description">{issue['description']}</div>
+                {error_groups_html}
             </div>
 """
     html += """
