@@ -6,6 +6,13 @@ import re
 from collections import defaultdict
 
 
+def _safe_str(value, default=''):
+    """Safely convert value to string, handling None."""
+    if value is None:
+        return default
+    return str(value)
+
+
 def normalize_error_message(error_message):
     """
     Normalize error message by replacing variable parts (IDs, numbers, etc.)
@@ -63,6 +70,9 @@ def extract_seller_ids(tasks):
     seller_ids = set()
     
     for task in tasks:
+        if not task:
+            continue
+            
         # Check direct seller_id field
         if task.get('seller_id'):
             seller_ids.add(str(task['seller_id']))
@@ -113,8 +123,11 @@ def group_errors_by_pattern(tasks):
     }))
     
     for task in tasks:
-        exception = task.get('exception', 'UnknownException')
-        error_message = task.get('error_message', '')
+        if not task:
+            continue
+            
+        exception = task.get('exception') or 'UnknownException'
+        error_message = task.get('error_message') or ''
         normalized = normalize_error_message(error_message)
         
         group = grouped[exception][normalized]
@@ -140,7 +153,7 @@ def group_errors_by_pattern(tasks):
                 'count': group_data['count'],
                 'example_task': group_data['example_task'],
                 'seller_ids': sorted(list(group_data['seller_ids'])),
-                'task_ids': [t.get('id') for t in group_data['all_tasks'][:10]]  # Limit to 10 IDs
+                'task_ids': [t.get('id') for t in group_data['all_tasks'][:10] if t]  # Limit to 10 IDs
             }
     
     return result
@@ -164,27 +177,36 @@ def create_error_groups_for_issue(data):
             - seller_ids: List of affected sellers
             - example_task: Full example task data
     """
+    if not data:
+        return []
+        
     grouped = group_errors_by_pattern(data)
     error_groups = []
     
     for exception, patterns in grouped.items():
         for pattern_key, group_data in patterns.items():
-            example_task = group_data['example_task']
+            example_task = group_data.get('example_task') or {}
+            
+            # Safely get error_message, handling None values
+            original_msg = _safe_str(example_task.get('error_message'), '')[:300]
+            example_error_msg = _safe_str(example_task.get('error_message'), '')[:300]
+            example_data = _safe_str(example_task.get('data'), '')[:200]
+            example_last_run = _safe_str(example_task.get('last_run'), '')
             
             error_groups.append({
                 'group_key': f"{exception}::{pattern_key[:50]}",
                 'exception': exception,
                 'pattern': group_data['pattern'],
-                'original_message': example_task.get('error_message', '')[:300] if example_task else '',
+                'original_message': original_msg,
                 'count': group_data['count'],
-                'seller_ids': group_data['seller_ids'],
-                'task_ids': group_data['task_ids'],
+                'seller_ids': group_data.get('seller_ids', []),
+                'task_ids': group_data.get('task_ids', []),
                 'example_task': {
-                    'id': example_task.get('id') if example_task else None,
-                    'last_run': str(example_task.get('last_run', '')) if example_task else '',
+                    'id': example_task.get('id'),
+                    'last_run': example_last_run,
                     'exception': exception,
-                    'error_message': example_task.get('error_message', '')[:300] if example_task else '',
-                    'data': str(example_task.get('data', ''))[:200] if example_task else ''
+                    'error_message': example_error_msg,
+                    'data': example_data
                 }
             })
     
