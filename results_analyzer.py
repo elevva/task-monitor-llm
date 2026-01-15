@@ -3,6 +3,7 @@ Results Analyzer for Task Health Monitor
 Analyzes query results and categorizes by priority.
 """
 from datetime import datetime
+from error_grouper import create_error_groups_for_issue, extract_seller_ids
 
 
 def analyze_results(results):
@@ -16,7 +17,7 @@ def analyze_results(results):
     - OK: 0-1 tasks
 
     Returns:
-        dict: Results organized by priority
+        dict: Results organized by priority with error groupings
     """
     analysis = {
         'critical': [],
@@ -68,15 +69,22 @@ def analyze_results(results):
 
         # Add specific details based on query type
         if data and len(data) > 0:
-            # Extract common error types
+            # Extract common error types (simple count)
             exceptions = {}
             for task in data:
                 exc = task.get('exception', 'Unknown')
                 exceptions[exc] = exceptions.get(exc, 0) + 1
-
             issue['error_types'] = exceptions
 
-            # Get oldest task info
+            # NEW: Create error groups by exception AND error message pattern
+            error_groups = create_error_groups_for_issue(data)
+            issue['error_groups'] = error_groups
+            
+            # NEW: Extract all affected seller_ids
+            all_seller_ids = extract_seller_ids(data)
+            issue['affected_sellers'] = sorted(list(all_seller_ids))
+
+            # Get oldest task info (keep for backward compatibility)
             oldest = data[0]
             if oldest.get('last_run'):
                 issue['oldest_task'] = {
