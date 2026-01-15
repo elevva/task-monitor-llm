@@ -12,6 +12,8 @@ Usage:
 
 FEATURES:
 - Integrates Claude AI to analyze issues and provide actionable recommendations
+- Groups errors by exception type AND error message pattern for detailed analysis
+- Shows affected seller_ids for each error group
 - Saves query results and AI analysis to JSON files for historical tracking
 - Supports re-generating HTML from saved JSON without re-executing queries
 - Requires ANTHROPIC_API_KEY in .env file for AI features
@@ -29,6 +31,7 @@ MODULAR STRUCTURE:
 - results_analyzer.py - Results analysis and prioritization
 - console_reporter.py - Console output formatting
 - html_reporter.py    - HTML report generation
+- error_grouper.py    - Error grouping by exception and pattern (NEW)
 """
 import sys
 import os
@@ -109,17 +112,18 @@ def main():
         # Save results to JSON
         results_file = save_json(results, f'results_{timestamp}.json', 'data')
 
-        # Claude AI analysis (unless skipped)
-        if not skip_ai:
-            claude_analysis = analyze_with_claude(results)
-            if claude_analysis:
-                # Save Claude analysis to JSON
-                save_json(claude_analysis, f'claude_{timestamp}.json', 'analysis')
-        else:
-            print("⏭️  Skipping Claude AI analysis (--no-ai flag)\n")
-
-    # Analyze results
+    # Analyze results FIRST (to get error_groups for Claude)
     analysis = analyze_results(results)
+
+    # Claude AI analysis (unless skipped or loading from JSON with existing analysis)
+    if not skip_ai and not claude_analysis:
+        # Pass analysis to Claude so it can analyze each error group
+        claude_analysis = analyze_with_claude(results, analysis)
+        if claude_analysis and not from_json:
+            # Save Claude analysis to JSON
+            save_json(claude_analysis, f'claude_{timestamp}.json', 'analysis')
+    elif skip_ai:
+        print("⏭️  Skipping Claude AI analysis (--no-ai flag)\n")
 
     # Print console report
     print_console_report(analysis, claude_analysis)
