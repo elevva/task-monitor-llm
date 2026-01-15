@@ -7,16 +7,17 @@ import os
 from datetime import datetime
 
 
-def analyze_with_claude(results):
+def analyze_with_claude(results, analysis=None):
     """
     Sends query results to Claude AI for deep analysis and recommendations.
-    Includes context from PRIORITY_RULES.md and TASK_QUERIES.md if available.
-
+    Now analyzes each error group separately for more detailed insights.
+    
     Args:
         results: Dict with query results
-
+        analysis: Optional analyzed results with error_groups
+        
     Returns:
-        dict: Claude's analysis by category with recommendations, or None if skipped/failed
+        dict: Claude's analysis by error group with recommendations, or None if skipped/failed
     """
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
@@ -33,27 +34,41 @@ def analyze_with_claude(results):
         print("   Install it with: pip install -r requirements.txt\n")
         return None
 
-    # Prepare data for Claude (simplify to avoid token limits)
+    # Prepare data for Claude - now using error groups
     summary_data = {}
+    error_groups_for_analysis = []
+    
     for query_name, result in results.items():
         if result['count'] > 0:
             summary_data[query_name] = {
                 'count': result['count'],
                 'description': result['description'],
-                'samples': []
             }
+    
+    # If we have analyzed data with error groups, use that
+    if analysis:
+        for priority in ['critical', 'high', 'medium']:
+            for issue in analysis.get(priority, []):
+                issue_name = issue['name']
+                error_groups = issue.get('error_groups', [])
+                affected_sellers = issue.get('affected_sellers', [])
+                
+                for group in error_groups:
+                    group_key = f"{issue_name}::{group['exception']}::{group['pattern'][:30]}"
+                    error_groups_for_analysis.append({
+                        'group_key': group_key,
+                        'issue_name': issue_name,
+                        'issue_description': issue.get('description', ''),
+                        'exception': group['exception'],
+                        'error_pattern': group['pattern'],
+                        'original_error': group['original_message'][:200],
+                        'count': group['count'],
+                        'affected_sellers': group['seller_ids'] or affected_sellers[:5],
+                        'example_task_id': group['example_task']['id'] if group.get('example_task') else None,
+                        'example_last_run': group['example_task']['last_run'] if group.get('example_task') else None
+                    })
 
-            # Include maximum 3 examples per query
-            for i, task in enumerate(result['data'][:3]):
-                summary_data[query_name]['samples'].append({
-                    'id': task.get('id'),
-                    'exception': task.get('exception'),
-                    'error_message': str(task.get('error_message', ''))[:200],
-                    'last_run': str(task.get('last_run')),
-                    'data': str(task.get('data', ''))[:100]
-                })
-
-    if not summary_data:
+    if not summary_data and not error_groups_for_analysis:
         print("✓ No issues found - skipping Claude AI analysis\n")
         return None
 
@@ -82,7 +97,38 @@ CONTEXTO DEL SISTEMA:
 {context}
 """
 
-    prompt += f"""
+    # Use error groups for more detailed analysis
+    if error_groups_for_analysis:
+        prompt += f"""
+GRUPOS DE ERRORES DETECTADOS (agrupados por excepción y patrón de error):
+{json.dumps(error_groups_for_analysis, indent=2, default=str)}
+
+Para CADA grupo de error (identificado por group_key), proporciona:
+1. **root_cause**: Identificá el problema raíz más probable basándote en la excepción y el patrón de error (máx 2 oraciones)
+2. **business_impact**: Evaluá el impacto considerando cantidad de tasks y sellers afectados (CRITICAL/HIGH/MEDIUM/LOW)
+3. **recommended_actions**: Lista de 2-3 acciones concretas e inmediatas específicas para este tipo de error
+4. **estimated_resolution_time**: Tiempo estimado de resolución
+5. **additional_notes**: Notas adicionales si las hay, especialmente si afecta a un solo seller (opcional)
+
+IMPORTANTE: 
+- Responde SOLO con JSON válido, sin texto adicional antes o después.
+- Usa el group_key exacto como clave en la respuesta.
+- Si un grupo afecta a un solo seller_id, menciona que puede ser un problema de configuración específico de esa cuenta.
+
+Formato de respuesta:
+{{
+  "group_key_1": {{
+    "root_cause": "explicación del problema raíz específico para este patrón",
+    "business_impact": "CRITICAL|HIGH|MEDIUM|LOW",
+    "recommended_actions": ["acción 1", "acción 2", "acción 3"],
+    "estimated_resolution_time": "tiempo estimado",
+    "additional_notes": "notas opcionales"
+  }},
+  "group_key_2": {{ ... }}
+}}"""
+    else:
+        # Fallback to old format if no error groups
+        prompt += f"""
 PROBLEMAS DETECTADOS:
 {json.dumps(summary_data, indent=2, default=str)}
 
@@ -109,7 +155,7 @@ Formato de respuesta:
     try:
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=4000,
+            max_tokens=8000,  # Increased for more groups
             messages=[{
                 "role": "user",
                 "content": prompt
@@ -125,7 +171,7 @@ Formato de respuesta:
         elif '```' in response_text:
             response_text = response_text.split('```')[1].split('```')[0]
 
-        analysis = json.loads(response_text.strip())
+        analysis_result = json.loads(response_text.strip())
 
         print("✓ Complete\n")
 
@@ -134,7 +180,9 @@ Formato de respuesta:
             'timestamp': datetime.now().isoformat(),
             'model': 'claude-sonnet-4-20250514',
             'total_issues': len(summary_data),
-            'analysis': analysis
+            'total_error_groups': len(error_groups_for_analysis),
+            'analysis': analysis_result,
+            'analysis_type': 'error_groups' if error_groups_for_analysis else 'legacy'
         }
 
         return analysis_with_metadata
