@@ -7,6 +7,8 @@ LLM NOTE:
 - All queries follow the same pattern: find tasks that haven't run in X minutes
 - The strategy + buffer (15 minutes) indicates when a task should have run
 - Results are ordered by last_run to find the oldest stuck tasks
+- UNCATEGORIZED_ERRORS is a catch-all query that runs LAST and filters out
+  tasks already captured by other queries
 """
 
 QUERIES = [
@@ -421,3 +423,30 @@ QUERIES = [
         '''
     }
 ]
+
+# UNCATEGORIZED_ERRORS query - catch-all for tasks with errors not captured above
+# This query is processed SEPARATELY after all others, filtering out already-seen task IDs
+UNCATEGORIZED_ERRORS_QUERY = {
+    'name': 'UNCATEGORIZED_ERRORS',
+    'description': 'Active tasks with errors (>10) not captured by specific queries - suggests new monitoring queries',
+    'sql': '''
+        SELECT 
+            now() as check_time,
+            last_run,
+            id, 
+            type, 
+            sub_type, 
+            status, 
+            created_at, 
+            data,
+            exception, 
+            error_message,
+            error_count
+        FROM task t 
+        WHERE t.status = 'ACTIVE' 
+            AND t.error_count > 10
+        ORDER BY t.type, t.sub_type, t.error_count DESC
+        LIMIT 200
+    ''',
+    'is_catchall': True  # Flag to indicate this needs special processing
+}

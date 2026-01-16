@@ -1,6 +1,7 @@
 """
 Claude AI Analyzer for Task Health Monitor
 Sends query results to Claude AI for deep analysis and recommendations.
+For UNCATEGORIZED_ERRORS, also suggests specific monitoring queries.
 """
 import json
 import os
@@ -11,6 +12,7 @@ def analyze_with_claude(results, analysis=None):
     """
     Sends query results to Claude AI for deep analysis and recommendations.
     Now analyzes each error group separately for more detailed insights.
+    For UNCATEGORIZED_ERRORS, also suggests monitoring queries.
     
     Args:
         results: Dict with query results
@@ -37,6 +39,7 @@ def analyze_with_claude(results, analysis=None):
     # Prepare data for Claude - now using error groups
     summary_data = {}
     error_groups_for_analysis = []
+    uncategorized_groups = []  # Separate list for uncategorized errors
     
     for query_name, result in results.items():
         if result['count'] > 0:
@@ -47,6 +50,7 @@ def analyze_with_claude(results, analysis=None):
     
     # If we have analyzed data with error groups, use that
     if analysis:
+        # Regular priority groups
         for priority in ['critical', 'high', 'medium']:
             for issue in analysis.get(priority, []):
                 issue_name = issue['name']
@@ -67,8 +71,28 @@ def analyze_with_claude(results, analysis=None):
                         'example_task_id': group['example_task']['id'] if group.get('example_task') else None,
                         'example_last_run': group['example_task']['last_run'] if group.get('example_task') else None
                     })
+        
+        # Uncategorized errors - need special handling for query suggestions
+        for issue in analysis.get('uncategorized', []):
+            issue_name = issue['name']
+            error_groups = issue.get('error_groups', [])
+            
+            for group in error_groups:
+                group_key = f"{issue_name}::{group['exception']}::{group['pattern'][:30]}"
+                uncategorized_groups.append({
+                    'group_key': group_key,
+                    'issue_name': issue_name,
+                    'exception': group['exception'],
+                    'error_pattern': group['pattern'],
+                    'original_error': group['original_message'][:200],
+                    'count': group['count'],
+                    'affected_sellers': group['seller_ids'][:5] if group.get('seller_ids') else [],
+                    'common_type': group.get('common_type', 'Unknown'),
+                    'common_subtype': group.get('common_subtype'),
+                    'example_task_id': group['example_task']['id'] if group.get('example_task') else None
+                })
 
-    if not summary_data and not error_groups_for_analysis:
+    if not summary_data and not error_groups_for_analysis and not uncategorized_groups:
         print("✓ No issues found - skipping Claude AI analysis\n")
         return None
 
@@ -87,7 +111,40 @@ def analyze_with_claude(results, analysis=None):
 
     # Call Claude API
     client = anthropic.Anthropic(api_key=api_key)
+    
+    all_analysis = {}
 
+    # First: Analyze regular error groups
+    if error_groups_for_analysis:
+        regular_analysis = _analyze_regular_groups(client, error_groups_for_analysis, context)
+        if regular_analysis:
+            all_analysis.update(regular_analysis)
+    
+    # Second: Analyze uncategorized groups with query suggestions
+    if uncategorized_groups:
+        uncategorized_analysis = _analyze_uncategorized_groups(client, uncategorized_groups, context)
+        if uncategorized_analysis:
+            all_analysis.update(uncategorized_analysis)
+
+    print("✓ Complete\n")
+
+    # Add metadata
+    analysis_with_metadata = {
+        'timestamp': datetime.now().isoformat(),
+        'model': 'claude-sonnet-4-20250514',
+        'total_issues': len(summary_data),
+        'total_error_groups': len(error_groups_for_analysis),
+        'total_uncategorized_groups': len(uncategorized_groups),
+        'analysis': all_analysis,
+        'analysis_type': 'error_groups'
+    }
+
+    return analysis_with_metadata
+
+
+def _analyze_regular_groups(client, error_groups, context):
+    """Analyze regular error groups (not uncategorized)"""
+    
     prompt = """Sos un experto en sistemas de e-commerce y análisis de tasks. Analiza los siguientes problemas detectados en el sistema de Elevva.
 """
 
@@ -97,11 +154,9 @@ CONTEXTO DEL SISTEMA:
 {context}
 """
 
-    # Use error groups for more detailed analysis
-    if error_groups_for_analysis:
-        prompt += f"""
+    prompt += f"""
 GRUPOS DE ERRORES DETECTADOS (agrupados por excepción y patrón de error):
-{json.dumps(error_groups_for_analysis, indent=2, default=str)}
+{json.dumps(error_groups, indent=2, default=str)}
 
 Para CADA grupo de error (identificado por group_key), proporciona:
 1. **root_cause**: Identificá el problema raíz más probable basándote en la excepción y el patrón de error (máx 2 oraciones)
@@ -123,31 +178,76 @@ Formato de respuesta:
     "recommended_actions": ["acción 1", "acción 2", "acción 3"],
     "estimated_resolution_time": "tiempo estimado",
     "additional_notes": "notas opcionales"
-  }},
-  "group_key_2": {{ ... }}
+  }}
 }}"""
-    else:
-        # Fallback to old format if no error groups
-        prompt += f"""
-PROBLEMAS DETECTADOS:
-{json.dumps(summary_data, indent=2, default=str)}
 
-Para cada categoría con problemas, proporciona:
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=8000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        response_text = message.content[0].text
+        if '```json' in response_text:
+            response_text = response_text.split('```json')[1].split('```')[0]
+        elif '```' in response_text:
+            response_text = response_text.split('```')[1].split('```')[0]
+
+        return json.loads(response_text.strip())
+
+    except Exception as e:
+        print(f"\n⚠️  Error analyzing regular groups: {str(e)}")
+        return None
+
+
+def _analyze_uncategorized_groups(client, uncategorized_groups, context):
+    """Analyze uncategorized error groups and suggest monitoring queries"""
+    
+    prompt = """Sos un experto en sistemas de e-commerce y monitoreo de tasks. Estos son errores que NO están siendo capturados por las queries de monitoreo existentes.
+
+Tu trabajo es:
+1. Analizar cada grupo de errores
+2. Sugerir una QUERY SQL específica que podría agregarse al sistema de monitoreo para capturar estos casos
+"""
+
+    if context:
+        prompt += f"""
+CONTEXTO DEL SISTEMA (queries existentes):
+{context}
+"""
+
+    prompt += f"""
+GRUPOS DE ERRORES NO CATEGORIZADOS:
+{json.dumps(uncategorized_groups, indent=2, default=str)}
+
+Para CADA grupo de error (identificado por group_key), proporciona:
 1. **root_cause**: Identificá el problema raíz más probable (máx 2 oraciones)
 2. **business_impact**: Evaluá el impacto (CRITICAL/HIGH/MEDIUM/LOW)
-3. **recommended_actions**: Lista de 2-3 acciones concretas e inmediatas
+3. **recommended_actions**: Lista de 2-3 acciones concretas
 4. **estimated_resolution_time**: Tiempo estimado de resolución
-5. **additional_notes**: Notas adicionales si las hay (opcional)
+5. **suggested_query_name**: Nombre sugerido para la nueva query de monitoreo (ej: "SHOPIFY_GRAPHQL_ERRORS")
+6. **suggested_query_sql**: Query SQL completa que podría agregarse a queries.py para monitorear este tipo de error. La query debe:
+   - Filtrar por el type y/o sub_type apropiado
+   - Considerar el patrón de excepción/error
+   - Seguir el formato de las queries existentes (SELECT con campos estándar)
+   - Incluir ORDER BY y LIMIT
+7. **additional_notes**: Por qué esta query sería útil (opcional)
 
-IMPORTANTE: Responde SOLO con JSON válido, sin texto adicional antes o después.
+IMPORTANTE: 
+- Responde SOLO con JSON válido, sin texto adicional.
+- La query SQL debe ser válida y ejecutable en MySQL.
+- Usa el group_key exacto como clave en la respuesta.
 
 Formato de respuesta:
 {{
-  "query_name": {{
+  "group_key_1": {{
     "root_cause": "explicación del problema raíz",
     "business_impact": "CRITICAL|HIGH|MEDIUM|LOW",
-    "recommended_actions": ["acción 1", "acción 2", "acción 3"],
+    "recommended_actions": ["acción 1", "acción 2"],
     "estimated_resolution_time": "tiempo estimado",
+    "suggested_query_name": "NOMBRE_SUGERIDO",
+    "suggested_query_sql": "SELECT ... FROM task t WHERE ... ORDER BY ... LIMIT ...",
     "additional_notes": "notas opcionales"
   }}
 }}"""
@@ -155,41 +255,18 @@ Formato de respuesta:
     try:
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=8000,  # Increased for more groups
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
+            max_tokens=8000,
+            messages=[{"role": "user", "content": prompt}]
         )
 
-        # Extract JSON from response
         response_text = message.content[0].text
-
-        # Claude sometimes wraps JSON in ```json, clean it
         if '```json' in response_text:
             response_text = response_text.split('```json')[1].split('```')[0]
         elif '```' in response_text:
             response_text = response_text.split('```')[1].split('```')[0]
 
-        analysis_result = json.loads(response_text.strip())
+        return json.loads(response_text.strip())
 
-        print("✓ Complete\n")
-
-        # Add metadata
-        analysis_with_metadata = {
-            'timestamp': datetime.now().isoformat(),
-            'model': 'claude-sonnet-4-20250514',
-            'total_issues': len(summary_data),
-            'total_error_groups': len(error_groups_for_analysis),
-            'analysis': analysis_result,
-            'analysis_type': 'error_groups' if error_groups_for_analysis else 'legacy'
-        }
-
-        return analysis_with_metadata
-
-    except json.JSONDecodeError as e:
-        print(f"✗ Failed to parse Claude response: {str(e)}\n")
-        return None
     except Exception as e:
-        print(f"✗ Error calling Claude API: {str(e)}\n")
+        print(f"\n⚠️  Error analyzing uncategorized groups: {str(e)}")
         return None

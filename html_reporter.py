@@ -24,6 +24,7 @@ def generate_html_report(analysis, claude_analysis=None, output_file='task_healt
     html_content += _generate_critical_section(analysis, claude_analysis, ai_analysis_type)
     html_content += _generate_high_section(analysis, claude_analysis, ai_analysis_type)
     html_content += _generate_medium_section(analysis)
+    html_content += _generate_uncategorized_section(analysis, claude_analysis, ai_analysis_type)  # NEW
     html_content += _generate_ok_section(analysis)
     html_content += _generate_html_footer()
 
@@ -82,7 +83,7 @@ def _generate_html_header(timestamp, claude_analysis):
         
         .summary-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 16px;
             margin-bottom: 24px;
         }}
@@ -108,6 +109,7 @@ def _generate_html_header(timestamp, claude_analysis):
         .critical-value {{ color: #e53e3e; }}
         .high-value {{ color: #ed8936; }}
         .medium-value {{ color: #ecc94b; }}
+        .uncategorized-value {{ color: #9f7aea; }}
         .ok-value {{ color: #48bb78; }}
         
         .section {{
@@ -138,6 +140,7 @@ def _generate_html_header(timestamp, claude_analysis):
         .critical-section {{ border-left: 8px solid #e53e3e; }}
         .high-section {{ border-left: 8px solid #ed8936; }}
         .medium-section {{ border-left: 8px solid #ecc94b; }}
+        .uncategorized-section {{ border-left: 8px solid #9f7aea; }}
         .ok-section {{ border-left: 8px solid #48bb78; }}
         
         .issue-card {{
@@ -175,6 +178,7 @@ def _generate_html_header(timestamp, claude_analysis):
         
         .high-count {{ background: #ed8936; }}
         .medium-count {{ background: #ecc94b; color: #2d3748; }}
+        .uncategorized-count {{ background: #9f7aea; }}
         
         .issue-description {{
             color: #4a5568;
@@ -418,6 +422,80 @@ def _generate_html_header(timestamp, claude_analysis):
             content: '📋';
             margin-right: 8px;
         }}
+        
+        /* NEW: Suggested Query Styles */
+        .suggested-query {{
+            background: linear-gradient(135deg, #9f7aea22 0%, #667eea22 100%);
+            border: 2px dashed #9f7aea;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 16px;
+        }}
+        
+        .suggested-query-header {{
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            color: #9f7aea;
+            font-weight: bold;
+        }}
+        
+        .suggested-query-header::before {{
+            content: '💡';
+            margin-right: 8px;
+            font-size: 18px;
+        }}
+        
+        .suggested-query-name {{
+            background: #9f7aea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 14px;
+            display: inline-block;
+            margin-bottom: 12px;
+        }}
+        
+        .suggested-query-sql {{
+            background: #1a202c;
+            color: #68d391;
+            padding: 16px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }}
+        
+        .copy-button {{
+            background: #9f7aea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 8px;
+        }}
+        
+        .copy-button:hover {{
+            background: #805ad5;
+        }}
+        
+        .filter-stats {{
+            background: #edf2f7;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: #4a5568;
+        }}
+        
+        .filter-stats strong {{
+            color: #2d3748;
+        }}
     </style>
 </head>
 <body>
@@ -432,6 +510,9 @@ def _generate_html_header(timestamp, claude_analysis):
 
 def _generate_summary_cards(analysis):
     """Generate summary cards HTML"""
+    uncategorized_count = len(analysis.get('uncategorized', []))
+    uncategorized_tasks = sum(issue['count'] for issue in analysis.get('uncategorized', []))
+    
     return f"""
         <!-- Summary Cards -->
         <div class="summary-grid">
@@ -448,6 +529,10 @@ def _generate_summary_cards(analysis):
                 <div class="value medium-value">{len(analysis['medium'])}</div>
             </div>
             <div class="summary-card">
+                <div class="label">🔮 Sin Categorizar</div>
+                <div class="value uncategorized-value">{uncategorized_tasks}</div>
+            </div>
+            <div class="summary-card">
                 <div class="label">✅ Saludable</div>
                 <div class="value ok-value">{len(analysis['ok'])}</div>
             </div>
@@ -455,7 +540,7 @@ def _generate_summary_cards(analysis):
 """
 
 
-def _generate_claude_analysis_html(ai_analysis, group_key=None):
+def _generate_claude_analysis_html(ai_analysis, group_key=None, is_uncategorized=False):
     """Generate Claude analysis HTML for a specific group or issue"""
     if not ai_analysis:
         return ""
@@ -477,6 +562,20 @@ def _generate_claude_analysis_html(ai_analysis, group_key=None):
     actions_list = ai.get('recommended_actions', [])
     actions_html = "".join([f"<li>{act}</li>" for act in actions_list])
     notes_html = f"<div class='analysis-notes'>{ai.get('additional_notes')}</div>" if ai.get('additional_notes') else ""
+    
+    # NEW: Suggested query for uncategorized errors
+    suggested_query_html = ""
+    if is_uncategorized and ai.get('suggested_query_sql'):
+        query_name = ai.get('suggested_query_name', 'NEW_QUERY')
+        query_sql = ai.get('suggested_query_sql', '')
+        suggested_query_html = f"""
+        <div class='suggested-query'>
+            <div class='suggested-query-header'>Query Sugerida para Monitoreo</div>
+            <div class='suggested-query-name'>{query_name}</div>
+            <div class='suggested-query-sql'>{query_sql}</div>
+            <button class='copy-button' onclick="navigator.clipboard.writeText(`{query_sql.replace('`', '\\`')}`).then(() => this.textContent = '✓ Copiado!')">📋 Copiar Query</button>
+        </div>
+        """
 
     return f"""
     <div class='claude-analysis'>
@@ -510,11 +609,12 @@ def _generate_claude_analysis_html(ai_analysis, group_key=None):
         </div>
         
         {notes_html}
+        {suggested_query_html}
     </div>
     """
 
 
-def _generate_error_group_html(group, claude_analysis=None, issue_name=None):
+def _generate_error_group_html(group, claude_analysis=None, issue_name=None, is_uncategorized=False):
     """Generate HTML for a single error group"""
     seller_html = ""
     if group.get('seller_ids'):
@@ -536,7 +636,7 @@ def _generate_error_group_html(group, claude_analysis=None, issue_name=None):
     
     # Generate Claude analysis for this specific group
     group_key = f"{issue_name}::{group['exception']}::{group['pattern'][:30]}" if issue_name else None
-    claude_html = _generate_claude_analysis_html(claude_analysis, group_key)
+    claude_html = _generate_claude_analysis_html(claude_analysis, group_key, is_uncategorized=is_uncategorized)
     
     return f"""
     <div class='error-group'>
@@ -552,7 +652,7 @@ def _generate_error_group_html(group, claude_analysis=None, issue_name=None):
     """
 
 
-def _generate_issue_card(issue, count_class='', claude_analysis=None, ai_analysis_type='legacy'):
+def _generate_issue_card(issue, count_class='', claude_analysis=None, ai_analysis_type='legacy', is_uncategorized=False):
     """Generate HTML for a single issue card"""
     error_types_html = ""
     if issue.get('error_types'):
@@ -572,13 +672,24 @@ def _generate_issue_card(issue, count_class='', claude_analysis=None, ai_analysi
             {seller_tags}{more_text}
         </div>
         """
+    
+    # Filter stats for uncategorized
+    filter_stats_html = ""
+    if is_uncategorized and issue.get('total_before_filter'):
+        filter_stats_html = f"""
+        <div class='filter-stats'>
+            📊 <strong>{issue.get('total_before_filter', 0)}</strong> tasks con errores encontradas | 
+            <strong>{issue.get('filtered_count', 0)}</strong> ya cubiertas por otras queries | 
+            <strong>{issue['count']}</strong> sin categorizar
+        </div>
+        """
 
-    # NEW: Error groups with individual Claude analysis
+    # Error groups with individual Claude analysis
     error_groups_html = ""
     if issue.get('error_groups') and ai_analysis_type == 'error_groups':
         groups_html = ""
         for group in issue['error_groups']:
-            groups_html += _generate_error_group_html(group, claude_analysis, issue['name'])
+            groups_html += _generate_error_group_html(group, claude_analysis, issue['name'], is_uncategorized=is_uncategorized)
         
         error_groups_html = f"""
         <div class='error-groups-container'>
@@ -662,6 +773,7 @@ def _generate_issue_card(issue, count_class='', claude_analysis=None, ai_analysi
                     <div class="issue-count {count_class}">{issue['count']} tasks</div>
                 </div>
                 <div class="issue-description">{issue['description']}</div>
+                {filter_stats_html}
                 {error_types_html}
                 {sellers_html}
                 {error_groups_html}
@@ -760,6 +872,36 @@ def _generate_medium_section(analysis):
                 {error_groups_html}
             </div>
 """
+    html += """
+            </div>
+        </div>
+"""
+    return html
+
+
+def _generate_uncategorized_section(analysis, claude_analysis, ai_analysis_type='legacy'):
+    """Generate uncategorized errors section HTML - NEW"""
+    if len(analysis.get('uncategorized', [])) == 0:
+        return ""
+
+    html = """
+        <!-- Uncategorized Errors -->
+        <div class="section uncategorized-section">
+            <div class="section-header" onclick="toggleSection('uncategorized')">
+                <span class="section-icon">🔮</span>
+                <h2>Errores Sin Categorizar - Queries Sugeridas</h2>
+                <span class="expand-icon" id="uncategorized-icon" style="margin-left: auto;">▼</span>
+            </div>
+            <div class="collapsible-content" id="uncategorized-content">
+                <div style="background: #f0e6ff; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                    <strong>💡 ¿Qué es esto?</strong><br>
+                    Estas son tasks con errores que NO están siendo capturadas por las queries específicas del monitor.
+                    Para cada grupo, Claude sugiere una query que podrías agregar a <code>queries.py</code> para monitorear estos casos.
+                </div>
+"""
+    for issue in analysis.get('uncategorized', []):
+        html += _generate_issue_card(issue, 'uncategorized-count', claude_analysis, ai_analysis_type, is_uncategorized=True)
+
     html += """
             </div>
         </div>
