@@ -227,16 +227,45 @@ Para CADA grupo de error (identificado por group_key), proporciona:
 3. **recommended_actions**: Lista de 2-3 acciones concretas
 4. **estimated_resolution_time**: Tiempo estimado de resolución
 5. **suggested_query_name**: Nombre sugerido para la nueva query de monitoreo (ej: "SHOPIFY_GRAPHQL_ERRORS")
-6. **suggested_query_sql**: Query SQL completa que podría agregarse a queries.py para monitorear este tipo de error. La query debe:
-   - Filtrar por el type y/o sub_type apropiado
-   - Considerar el patrón de excepción/error
-   - Seguir el formato de las queries existentes (SELECT con campos estándar)
-   - Incluir ORDER BY y LIMIT
+6. **suggested_query_sql**: Query SQL completa que podría agregarse a queries.py para monitorear este tipo de error.
 7. **additional_notes**: Por qué esta query sería útil (opcional)
+
+⚠️ REGLAS CRÍTICAS DE PERFORMANCE PARA suggested_query_sql:
+- La columna 'exception' NO está indexada - NUNCA filtrar SOLO por exception (causaría full table scan)
+- SIEMPRE incluir `t.status = 'ACTIVE'` como condición en el WHERE (columna indexada)
+- Filtrar por `type` y/o `sub_type` cuando sea posible (columnas indexadas)
+- Usar `error_count > 0` o similar para filtrar tasks con errores
+- El patrón de WHERE debe ser: WHERE t.status = 'ACTIVE' AND t.type = '...' AND (otras condiciones)
+- Seguir el formato de las queries existentes (SELECT con campos estándar)
+- Incluir ORDER BY y LIMIT
+
+Ejemplo de query CORRECTA y PERFORMANTE:
+```sql
+SELECT 
+    now() as check_time,
+    last_run, 
+    id, 
+    type, 
+    sub_type, 
+    status, 
+    created_at, 
+    data,
+    exception, 
+    error_message,
+    error_count
+FROM task t 
+WHERE t.status = 'ACTIVE' 
+    AND t.type = 'POLLING' 
+    AND t.sub_type = 'ORDER'
+    AND t.error_count > 10
+ORDER BY t.error_count DESC, t.last_run ASC
+LIMIT 50
+```
 
 IMPORTANTE: 
 - Responde SOLO con JSON válido, sin texto adicional.
-- La query SQL debe ser válida y ejecutable en MySQL.
+- La query SQL debe ser válida, ejecutable en MySQL y PERFORMANTE (usar índices).
+- TODAS las queries DEBEN incluir `t.status = 'ACTIVE'` para aprovechar el índice.
 - Usa el group_key exacto como clave en la respuesta.
 
 Formato de respuesta:
@@ -247,7 +276,7 @@ Formato de respuesta:
     "recommended_actions": ["acción 1", "acción 2"],
     "estimated_resolution_time": "tiempo estimado",
     "suggested_query_name": "NOMBRE_SUGERIDO",
-    "suggested_query_sql": "SELECT ... FROM task t WHERE ... ORDER BY ... LIMIT ...",
+    "suggested_query_sql": "SELECT ... FROM task t WHERE t.status = 'ACTIVE' AND ... ORDER BY ... LIMIT ...",
     "additional_notes": "notas opcionales"
   }}
 }}"""
