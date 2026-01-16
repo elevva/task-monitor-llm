@@ -59,3 +59,20 @@ def get_db_connection_params():
         'password': password,
         'database': os.environ.get('DB_NAME', 'elevvate')
     }
+
+
+def get_db_connection():
+    """
+    Create and return a database connection using the configured parameters.
+
+    Returns:
+        mysql.connector.connection.MySQLConnection or None: Database connection if successful
+    """
+    try:
+        import mysql.connector
+        params = get_db_connection_params()
+        connection = mysql.connector.connect(**params)
+        return connection
+    except Exception as e:
+        print(f"❌ Database connection error: {str(e)}")
+        return None
